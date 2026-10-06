@@ -47,6 +47,8 @@
 //   GOTCHA: `0xAB_u8 << 8` overflows a u8. Cast FIRST: (byte as u16) << 8
 //   GOTCHA: shifting a u32 by 32 or more panics in debug builds. Remember this for TODO 8!
 
+use std::ffi::FromBytesUntilNulError;
+
 const FRAME: [u8; 60] = [
     0x00, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x08, 0x00, 0x27, 0x13, 0x37, 0x42, //
     0x08, 0x00, 0x45, 0x00, 0x00, 0x24, 0x1c, 0x46, 0x40, 0x00, 0x40, 0x01, //
@@ -123,16 +125,43 @@ const IP: usize = 14; // where the IPv4 header starts: right after the 14-byte E
 //           source and destination as dotted decimal: 192.168.1.42
 //         Expected: version 4, header 20 bytes, total length 36, DF set, TTL 64,
 //                   protocol 1 (ICMP), 192.168.1.42 -> 8.8.8.8
-fn print_ipv4_header(frame: [u8; 60]) {
-    let nibble = 0x0f;
-    let version = frame[IP] >> 4 & nibble;
-    let ihl = frame[IP] & nibble;
 
-    print!(
-        "version {}, header {} bytes, total length",
+fn from_be_bytes(bytes: [u8; 2]) -> u16 {
+    ((bytes[0] as u16) << 8) | (bytes[1] as u16)
+}
+
+fn print_ipv4_header(frame: [u8; 60]) {
+    let ip = frame[14..].to_vec();
+
+    let version = ip[0] >> 4;
+    let ihl = ip[0] & 0x0f;
+
+    let ip_header_len = ihl as usize * 4;
+    let total_length = from_be_bytes([ip[2], ip[3]]) as usize;
+
+    let df = (ip[6] & 0x40) != 0;
+    let ttl = ip[8];
+    let protocol = ip[9];
+    let protocol_name = match protocol {
+        1 => "ICMP",
+        6 => "TCP",
+        17 => "UPD",
+        _ => "unkown",
+    };
+
+    println!(
+        "version {}, header {} , total length {}, DF {} TTL {}",
         version,
-        ihl * 4
-    )
+        ip_header_len,
+        total_length,
+        if df { "set" } else { "unset" },
+        ttl
+    );
+    println!(
+        "protocol {} ({}) {}.{}.{}.{} -> {}.{}.{}.{}",
+        protocol, protocol_name, ip[12], ip[13], ip[14], ip[15], ip[16], ip[17], ip[18], ip[19]
+    );
+    // println!("{:02x?}", ip_header);
 }
 
 // TODO 5: `fn checksum(frame: [u8; 60], start: usize, end: usize) -> u16`
@@ -144,6 +173,26 @@ fn print_ipv4_header(frame: [u8; 60]) {
 //         - What if the length is ODD? (RFC 1071 says. Not needed for this frame, but be correct.)
 //         Then VERIFY the IPv4 header: checksum over the header INCLUDING its checksum
 //         field should give a special value. Which one? (Q7.) Print "valid" or "INVALID".
+fn checksum(frame: [u8; 60], start: usize, end: usize) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = start;
+
+    while i + 1 < end {
+        let word = ((frame[i] as u32) << 8) | frame[i + 1] as u32;
+        sum += word;
+        i += 2;
+    }
+
+    if i < end {
+        sum += (frame[i] as u32) << 8;
+    }
+
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    !(sum as u16)
+}
 
 // TODO 6: Break it on purpose. Copy the frame (`let mut bad = FRAME;`), flip ONE bit
 //         anywhere in the IPv4 header with ^=, and show that verification now fails.
@@ -199,6 +248,21 @@ fn main() {
     // tests
     // print_ethernet_header(FRAME);
     print_ipv4_header(FRAME);
+
+    let ip_header_len = (FRAME[IP] & 0x0f) as usize * 4;
+    let ip_end = IP + ip_header_len;
+
+    let checksum_result = checksum(FRAME, IP, ip_end);
+
+    println!(
+        "checksum {:04x} {}",
+        checksum_result,
+        if checksum_result == 0 {
+            "valid"
+        } else {
+            "INVALID"
+        }
+    )
 }
 
 // ============================================================================
