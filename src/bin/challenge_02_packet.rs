@@ -197,6 +197,24 @@ fn checksum(frame: [u8; 60], start: usize, end: usize) -> u16 {
 // TODO 6: Break it on purpose. Copy the frame (`let mut bad = FRAME;`), flip ONE bit
 //         anywhere in the IPv4 header with ^=, and show that verification now fails.
 //         Then flip a bit in the PADDING. Does the IP checksum notice? Why not?
+fn check_bad_frame() {
+    let mut bad = FRAME;
+    bad[2] = bad[2] & 0b00010000;
+    let ip_header_len = (FRAME[IP] & 0x0f) as usize * 4;
+    let ip_end = IP + ip_header_len;
+
+    let checksum_result = checksum(bad, IP, ip_end);
+
+    println!(
+        "checksum {:04x} {}",
+        checksum_result,
+        if checksum_result == 0 {
+            "valid"
+        } else {
+            "INVALID"
+        }
+    )
+}
 
 // ============================================================================
 // ICMP (carried inside IPv4)
@@ -262,7 +280,9 @@ fn main() {
         } else {
             "INVALID"
         }
-    )
+    );
+
+    check_bad_frame();
 }
 
 // ============================================================================
